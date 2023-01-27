@@ -1,4 +1,6 @@
-﻿class Program
+﻿using System.Diagnostics.SymbolStore;
+
+class Program
 {
     static void Main(string[] args)
     {
@@ -35,7 +37,7 @@ class Market
                     break;
 
                 case CommandToBuyProduct:
-                    SellItem();
+                    SellProduct();
                     break;
 
                 case CommandToExit:
@@ -48,47 +50,49 @@ class Market
         }
     }
 
-    public void SellItem()
+    public void SellProduct()
     {
-        int userInputBuyItemIndex;
-        int userInputAmount;
-
         _seller.ShowItems();
 
         Console.Write("Введите номер желаемого товара:");
 
-        userInputBuyItemIndex = ReadInt() - 1;
+        int index = ReadInt() - 1;
+        Cell cell = _seller.TryGetItem(index);
 
-        if (_seller.TryGetItem(userInputBuyItemIndex, out Cell cell /*Product product*/) == false)
+        if (cell == null)
         {
-            Console.WriteLine("Такого товара нету");
+            Console.WriteLine("Такого товара нет");
 
             return;
         }
 
         Console.Write("Введите количество товара: ");
 
-        userInputAmount = ReadInt();
+        int amount = ReadInt();
 
-        if (userInputAmount <= cell.Amount)
+        if (amount > cell.Amount)
         {
-            if (_player.TryToBuy(cell.Product, userInputAmount))
-            {
-                _player.AddItem(cell.Product, userInputAmount);
-                cell.DecreaseAmount(userInputAmount);
-                _seller.RemoveItem(cell);
-                _seller.IncreaseMoney(cell.Product, userInputAmount);
-                _player.DecreaseMoney(cell.Product, userInputAmount);
-
-                Console.WriteLine($"Вы купили {cell.Product.Name}, по цене {cell.Product.Price} | {userInputAmount} шт.");
-            }
-        }
-        else
-        {
-            Console.WriteLine("Такого количества нету");
+            Console.WriteLine("Такого количества нет");
 
             return;
         }
+
+        int totalPrice = amount * cell.Product.Price;
+
+        if (_player.IsCanPay(totalPrice) == false)
+        {
+            Console.WriteLine("Не хватает денег");
+
+            return;
+        }
+
+        _player.AddItem(cell.Product, amount, totalPrice);
+        _player.DecreaseMoney(cell.Product, amount);
+        _seller.RemoveItem(cell);
+        _seller.IncreaseMoney(cell.Product, amount);
+        cell.DecreaseAmount(amount);
+
+        Console.WriteLine($"Вы купили {cell.Product.Name}, по цене {cell.Product.Price} | {amount} шт.");
     }
 
     private int ReadInt()
@@ -106,14 +110,14 @@ class Market
 
 abstract class Person
 {
-    protected List<Cell> Items;
-
-    public int Money { get; private set; }
-
     public Person(int money)
     {
         Money = money;
     }
+
+    protected List<Cell> Items;
+
+    public int Money { get; protected set; }
 
     public void DecreaseMoney(Product product, int amount)
     {
@@ -137,26 +141,10 @@ abstract class Person
 
     public void RemoveItem(Cell cell)
     {
-        if (cell.Amount <= 0)
+        if (cell.Amount == 0)
         {
             Items.Remove(cell);
         }
-    }
-
-    public bool TryGetStorage(Product product, out Cell cell)
-    {
-        cell = null;
-
-        foreach (Cell currentCell in Items)
-        {
-            if (currentCell.IsContains(product))
-            {
-                cell = currentCell;
-                return true;
-            }
-        }
-
-        return false;
     }
 }
 
@@ -174,23 +162,20 @@ class Seller : Person
         Items.Add(new Cell(new Clothes("Шлем Короля Лича", 800, 10000), 1));
     }
 
-    public bool TryGetItem(int userInputBuyItemIndex, out Cell cell /*out Product product*/)
+    public Cell TryGetItem(int index)
     {
-        cell = null;
-        //product= null;
+        Cell cell = null;
 
-        if (userInputBuyItemIndex < 0 || userInputBuyItemIndex >= Items.Count)
+        if (index < 0 || index >= Items.Count)
         {
-            return false;
+            return cell;
         }
 
-        cell = Items[userInputBuyItemIndex];
-        //product = Items[userInputBuyItemIndex].Product;
+        cell = Items[index];
 
-        Console.WriteLine($"Вы выбрали {cell}");
-        //Console.WriteLine($"Вы выбрали {product}");
+        Console.WriteLine($"Вы выбрали {cell.Product.Name}");
 
-        return true;
+        return cell;
     }
 }
 
@@ -206,44 +191,42 @@ class Player : Person
         Items.Add(new Cell(new Clothes("Самодельные поножи из кожи дракона", 10, 550), 6));
     }
 
-    public bool TryToBuy(Product product, int amount)
+    public bool IsCanPay(int cost)
     {
-        int productFullPrice = product.Price * amount;
-
-        if (productFullPrice > Money)
-        {
-            Console.WriteLine("У вас не хватает денег");
-            return false;
-        }
-
-        return true;
+        return Money >= cost;
     }
 
-    public bool AddItem(Product product, int userInpruAmount)
+    public void AddItem(Product product, int amount, int cost)
     {
-        if (TryGetStorage(product, out Cell cell))
+        bool isFound = false;
+
+        foreach (Cell item in Items)
         {
-            cell.IncreaseAmount(userInpruAmount);
-            return false;
+            if (item.IsContains(product))
+            {
+                item.IncreaseAmount(amount);
+                isFound = true;
+                return;
+            }
         }
-        else
+
+        if (isFound == false)
         {
-            Items.Add(new Cell(product, userInpruAmount));
-            return true;
+            Items.Add(new Cell(product, amount));
         }
     }
 }
 
 abstract class Product
 {
-    public string Name { get; private set; }
-    public int Price { get; private set; }
-
     public Product(string name, int price)
     {
         Name = name;
         Price = price;
     }
+
+    public string Name { get; private set; }
+    public int Price { get; private set; }
 }
 
 class Cell
@@ -253,6 +236,7 @@ class Cell
         Product = product;
         Amount = amount;
     }
+
     public Product Product { get; }
     public int Amount { get; private set; }
 
@@ -275,20 +259,20 @@ class Cell
 
 class Weapon : Product
 {
-    public int Damage { get; private set; }
-
     public Weapon(string name, int price, int damage) : base(name, price)
     {
         Damage = damage;
     }
+
+    public int Damage { get; private set; }
 }
 
 class Clothes : Product
 {
-    public int Armor { get; private set; }
-
     public Clothes(string name, int price, int armor) : base(name, price)
     {
         Armor = armor;
     }
+
+    public int Armor { get; private set; }
 }
